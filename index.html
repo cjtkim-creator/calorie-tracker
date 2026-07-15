@@ -132,6 +132,16 @@
   .sync-btn:disabled{background:#AEBBD6;cursor:default;}
   .sync-btn.secondary{background:#fff;color:var(--blue-dark);border:1px solid var(--blue-dark);}
   .sync-btn.logout{background:#fff;color:var(--coral);border:1px solid var(--coral);}
+
+  .goal-panel{background:#EAF2EC;border-color:#C9DECB;}
+  .goal-card{background:linear-gradient(135deg, var(--green-light), #fff);border:1px solid var(--green);}
+  .goal-card .goal-empty-btn{background:var(--green);color:#fff;border:none;border-radius:9px;padding:8px 14px;font-size:12.5px;font-weight:700;cursor:pointer;}
+  .goal-row{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;}
+  .goal-stat{flex:1;min-width:130px;}
+  .goal-stat .gk{font-size:10.5px;color:var(--muted);}
+  .goal-stat .gv{font-size:14px;font-weight:800;color:var(--green-dark);}
+  .goal-dday{display:inline-block;background:var(--green);color:#fff;font-size:11px;font-weight:800;padding:2px 9px;border-radius:20px;margin-left:6px;}
+  .goal-dday.ended{background:var(--coral);}
 </style>
 </head>
 <body>
@@ -144,7 +154,9 @@
    칼로리: 음식/운동 DB를 앱 안에서 직접 추가·관리 가능
    ============================================================ */
 
-const DEFAULT_SETTINGS = { activityBaseline: 2100, weeklyCalTarget: -6070, weeklyKgTarget: 0.79, stepsKcalFactor: 0.045 };
+const DEFAULT_SETTINGS = { activityBaseline: 2100, stepsKcalFactor: 0.045 };
+const LEGACY_WEEKLY_CAL = -6070;
+const LEGACY_WEEKLY_KG = 0.79;
 const MEAL_TYPES = [
   { key:'breakfast', label:'🍏 아침' }, { key:'lunch', label:'🥗 점심' },
   { key:'snack', label:'🥛 간식' }, { key:'dinner', label:'🥩 저녁 & 술자리' },
@@ -219,6 +231,7 @@ function findInDB(list, text){
 /* ---------------- 상태 ---------------- */
 let state = {
   settings: { ...DEFAULT_SETTINGS },
+  goal: null, goalOpen: false,
   foodDB: [], exerciseDB: [],
   currentDate: new Date(),
   currentLog: emptyLog(),
@@ -374,14 +387,13 @@ function updateSteps(value){ state.currentLog.steps = Math.max(0, Number(value)|
 function updateWeight(value){ const v=value===''?null:Number(value); state.currentLog.weightMorning=(v===null||isNaN(v))?null:v; saveAndRefresh(); }
 function updateWaist(value){ const v=value===''?null:Number(value); state.currentLog.waistCm=(v===null||isNaN(v))?null:v; saveAndRefresh(); }
 
-function toggleSettings(){ state.settingsOpen=!state.settingsOpen; state.dbOpen=false; render(); }
-function toggleDB(){ state.dbOpen=!state.dbOpen; state.settingsOpen=false; render(); }
+function toggleSettings(){ state.settingsOpen=!state.settingsOpen; state.dbOpen=false; state.goalOpen=false; render(); }
+function toggleDB(){ state.dbOpen=!state.dbOpen; state.settingsOpen=false; state.goalOpen=false; render(); }
+function toggleGoal(){ state.goalOpen=!state.goalOpen; state.settingsOpen=false; state.dbOpen=false; render(); }
 function saveSettingsForm(){
   const g = id => Number(document.getElementById(id).value);
   state.settings = {
     activityBaseline: g('set-activity') || DEFAULT_SETTINGS.activityBaseline,
-    weeklyCalTarget: g('set-calTarget'),
-    weeklyKgTarget: g('set-kgTarget') || DEFAULT_SETTINGS.weeklyKgTarget,
     stepsKcalFactor: g('set-stepsFactor') || DEFAULT_SETTINGS.stepsKcalFactor,
   };
   storageSet('settings', JSON.stringify(state.settings));
@@ -390,6 +402,50 @@ function saveSettingsForm(){
   drivePushIfSignedIn();
   render();
 }
+
+/* ---------------- 목표 설정 ---------------- */
+function loadGoal(){
+  const v = storageGet('goal');
+  if(!v) return null;
+  try{ return JSON.parse(v); }catch(e){ return null; }
+}
+function saveGoalForm(){
+  const gv = id => document.getElementById(id).value;
+  const startDate = gv('goal-startDate') || dateKey(new Date());
+  const periodValue = Number(gv('goal-periodValue')) || 4;
+  const periodUnit = gv('goal-periodUnit') || 'weeks';
+  const startWeight = Number(gv('goal-startWeight')) || null;
+  const targetWeight = Number(gv('goal-targetWeight')) || null;
+  const startWaistRaw = gv('goal-startWaist');
+  const targetWaistRaw = gv('goal-targetWaist');
+  state.goal = {
+    startDate, periodValue, periodUnit, startWeight, targetWeight,
+    startWaist: startWaistRaw ? Number(startWaistRaw) : null,
+    targetWaist: targetWaistRaw ? Number(targetWaistRaw) : null,
+  };
+  storageSet('goal', JSON.stringify(state.goal));
+  state.goalOpen = false;
+  drivePushIfSignedIn();
+  render();
+}
+function computeGoalDerived(goal){
+  if(!goal || !goal.startDate || !goal.startWeight || !goal.targetWeight || !goal.periodValue) return null;
+  const periodDays = Math.round(goal.periodUnit==='months' ? goal.periodValue*30 : goal.periodValue*7);
+  if(periodDays<=0) return null;
+  const periodWeeks = periodDays/7;
+  const start = new Date(goal.startDate+'T00:00:00');
+  const end = new Date(start); end.setDate(end.getDate()+periodDays);
+  const totalKg = goal.startWeight - goal.targetWeight;
+  const totalCal = -(totalKg*7700);
+  const weeklyKg = totalKg/periodWeeks;
+  const weeklyCal = totalCal/periodWeeks;
+  const waistTotal = (goal.startWaist!=null && goal.targetWaist!=null) ? (goal.startWaist-goal.targetWaist) : null;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const daysElapsed = Math.floor((today-start)/86400000);
+  const daysLeft = periodDays - daysElapsed;
+  return { periodDays, periodWeeks, start, end, totalKg, totalCal, weeklyKg, weeklyCal, waistTotal, daysElapsed, daysLeft };
+}
+function fmtMD(d){ return `${d.getMonth()+1}/${d.getDate()}`; }
 
 /* ---------------- DB 관리 액션 ---------------- */
 function addDBEntry(kind){
@@ -501,13 +557,14 @@ function gatherAllData(){
     const v = storageGet(k);
     if(v){ try{ logs[k.slice(4)] = JSON.parse(v); }catch(e){} }
   }
-  return { settings: state.settings, foodDB: state.foodDB, exerciseDB: state.exerciseDB, logs };
+  return { settings: state.settings, foodDB: state.foodDB, exerciseDB: state.exerciseDB, goal: state.goal, logs };
 }
 function applyAllData(blob){
   if(!blob) return;
   if(blob.settings) storageSet('settings', JSON.stringify(blob.settings));
   if(blob.foodDB) storageSet('foodDB', JSON.stringify(blob.foodDB));
   if(blob.exerciseDB) storageSet('exerciseDB', JSON.stringify(blob.exerciseDB));
+  if(blob.goal) storageSet('goal', JSON.stringify(blob.goal));
   if(blob.logs){ for(const d in blob.logs){ storageSet('log:'+d, JSON.stringify(blob.logs[d])); } }
 }
 
@@ -527,6 +584,7 @@ async function driveSyncAfterLogin(){
     state.settings = loadSettings();
     state.foodDB = loadOrSeedDB('foodDB', FOOD_DB_SEED);
     state.exerciseDB = loadOrSeedDB('exerciseDB', EXERCISE_DB_SEED);
+    state.goal = loadGoal();
     refreshDay();
     state.errorMsg = null;
   }catch(e){
@@ -548,6 +606,7 @@ async function driveManualRefresh(){
     state.settings = loadSettings();
     state.foodDB = loadOrSeedDB('foodDB', FOOD_DB_SEED);
     state.exerciseDB = loadOrSeedDB('exerciseDB', EXERCISE_DB_SEED);
+    state.goal = loadGoal();
     refreshDay();
     state.errorMsg = null;
   }catch(e){
@@ -646,6 +705,34 @@ function metricStatsHTML(history, field, unit, label){
     <div class="${cls}" style="font-size:15px;font-weight:800;margin-top:2px;">${delta>0?'+':''}${delta.toFixed(1)}${unit}</div>
   </div>`;
 }
+function goalCardHTML(derived, goal){
+  if(!derived){
+    return `
+    <div class="card goal-card">
+      <h2>🎯 목표 현황</h2>
+      <div class="empty-note">아직 목표가 설정되지 않았어요. 시작일, 목표 기간, 시작/목표 체중을 입력하면 총 목표 칼로리와 주간 목표가 자동으로 계산돼요.</div>
+      <button class="goal-empty-btn" style="margin-top:8px;" onclick="toggleGoal()">🎯 목표 설정하러 가기</button>
+    </div>`;
+  }
+  const periodLabel = goal.periodUnit==='months' ? `${goal.periodValue}개월` : `${goal.periodValue}주`;
+  const dday = derived.daysElapsed < 0
+    ? `<span class="goal-dday">D-${Math.abs(derived.daysElapsed)} (시작 전)</span>`
+    : (derived.daysLeft >= 0 ? `<span class="goal-dday">D-${derived.daysLeft}</span>` : `<span class="goal-dday ended">기간 종료</span>`);
+  const waistLine = derived.waistTotal!=null
+    ? `<div class="goal-stat"><div class="gk">허리둘레 목표</div><div class="gv">${goal.startWaist}cm → ${goal.targetWaist}cm (${derived.waistTotal>0?'-':'+'}${Math.abs(derived.waistTotal).toFixed(1)}cm)</div></div>`
+    : '';
+  return `
+  <div class="card goal-card">
+    <h2>🎯 목표 현황 ${dday}</h2>
+    <div style="font-size:12.5px;color:var(--muted);">${fmtMD(derived.start)} ~ ${fmtMD(derived.end)} (${periodLabel})</div>
+    <div class="goal-row">
+      <div class="goal-stat"><div class="gk">체중 목표</div><div class="gv">${goal.startWeight}kg → ${goal.targetWeight}kg (${derived.totalKg>0?'-':'+'}${Math.abs(derived.totalKg).toFixed(1)}kg)</div></div>
+      ${waistLine}
+      <div class="goal-stat"><div class="gk">총 목표 칼로리</div><div class="gv">${Math.round(derived.totalCal).toLocaleString()} kcal</div></div>
+      <div class="goal-stat"><div class="gk">주간 목표</div><div class="gv">${Math.round(derived.weeklyCal).toLocaleString()} kcal/주 (${derived.weeklyKg.toFixed(2)}kg/주)</div></div>
+    </div>
+  </div>`;
+}
 function dbRowHTML(kind, entry){
   return `
   <div class="db-row">
@@ -673,6 +760,8 @@ function dbColumnHTML(kind, title, list){
 function render(){
   const app = document.getElementById('app');
   const s = state.settings;
+  const goal = state.goal;
+  const goalDerived = computeGoalDerived(goal);
   const totals = computeTotals(state.currentLog, s);
   const netClass = totals.net<0?'net-neg':'net-pos';
   const wd = WD[state.currentDate.getDay()];
@@ -681,8 +770,10 @@ function render(){
   const loggedDays = state.weekData.filter(d=>d.hasData);
   const weeklyNet = loggedDays.reduce((sum,d)=>sum+d.totals.net,0);
   const kgLoss = -weeklyNet/7700;
-  const calPct = s.weeklyCalTarget ? Math.round((weeklyNet/s.weeklyCalTarget)*100) : 0;
-  const kgPct = s.weeklyKgTarget ? Math.round((kgLoss/s.weeklyKgTarget)*100) : 0;
+  const weeklyCalTarget = goalDerived ? goalDerived.weeklyCal : LEGACY_WEEKLY_CAL;
+  const weeklyKgTarget = goalDerived ? goalDerived.weeklyKg : LEGACY_WEEKLY_KG;
+  const calPct = weeklyCalTarget ? Math.round((weeklyNet/weeklyCalTarget)*100) : 0;
+  const kgPct = weeklyKgTarget ? Math.round((kgLoss/weeklyKgTarget)*100) : 0;
 
   app.innerHTML = `
     <div class="top">
@@ -691,10 +782,34 @@ function render(){
         <div><h1>5kg 감량 트래커</h1><div class="tag">오늘 먹고 움직인 만큼, 자동으로 계산돼요</div></div>
       </div>
       <div class="icon-btns">
+        <button class="gear" onclick="toggleGoal()" title="목표 설정">🎯</button>
         <button class="gear" onclick="toggleDB()" title="음식·운동 DB 관리">📚</button>
         <button class="gear" onclick="toggleSettings()" title="설정">⚙️</button>
       </div>
     </div>
+
+    ${state.goalOpen ? `
+    <div class="panel goal-panel">
+      <h3>🎯 목표 설정</h3>
+      <div class="settings-grid">
+        <div><label>시작일</label><input type="date" id="goal-startDate" value="${goal?.startDate || dateKey(new Date())}"></div>
+        <div><label>목표 기간</label>
+          <div style="display:flex;gap:6px;">
+            <input type="number" min="1" id="goal-periodValue" value="${goal?.periodValue ?? 4}" style="flex:1;">
+            <select id="goal-periodUnit" style="border-radius:8px;border:1px solid var(--border);padding:0 6px;">
+              <option value="weeks" ${goal?.periodUnit!=='months'?'selected':''}>주</option>
+              <option value="months" ${goal?.periodUnit==='months'?'selected':''}>개월</option>
+            </select>
+          </div>
+        </div>
+        <div><label>시작 체중(kg) — 프로그램 시작 당시</label><input type="number" step="0.1" id="goal-startWeight" value="${goal?.startWeight ?? ''}"></div>
+        <div><label>목표 체중(kg)</label><input type="number" step="0.1" id="goal-targetWeight" value="${goal?.targetWeight ?? ''}"></div>
+        <div><label>시작 허리둘레(cm) — 선택</label><input type="number" step="0.1" id="goal-startWaist" value="${goal?.startWaist ?? ''}"></div>
+        <div><label>목표 허리둘레(cm) — 선택</label><input type="number" step="0.1" id="goal-targetWaist" value="${goal?.targetWaist ?? ''}"></div>
+      </div>
+      <button class="save-btn" onclick="saveGoalForm()">저장하고 시작하기</button>
+      <div class="hint">저장하면 총 목표 감량 칼로리와 주간 목표가 자동으로 계산돼서 아래 "🎯 목표 현황" 카드와 주간 달성률에 반영돼요.</div>
+    </div>` : ''}
 
     ${state.dbOpen ? `
     <div class="panel db-panel">
@@ -712,14 +827,14 @@ function render(){
       <div class="settings-grid">
         <div><label>활동대사 (기초대사+비운동활동, kcal/일)</label><input type="number" id="set-activity" value="${s.activityBaseline}"></div>
         <div><label>걸음당 소모 칼로리 (kcal/걸음)</label><input type="number" step="0.001" id="set-stepsFactor" value="${s.stepsKcalFactor}"></div>
-        <div><label>주간 목표 잔여칼로리 (음수, kcal)</label><input type="number" id="set-calTarget" value="${s.weeklyCalTarget}"></div>
-        <div><label>주간 목표 감량 (kg)</label><input type="number" step="0.01" id="set-kgTarget" value="${s.weeklyKgTarget}"></div>
       </div>
       <button class="save-btn" onclick="saveSettingsForm()">저장</button>
-      <div class="hint">이 설정과 모든 기록은 지금 이 브라우저(기기)에만 저장돼요.</div>
+      <div class="hint">주간 목표 칼로리/감량은 이제 🎯 목표 설정에서 자동으로 계산돼요. 여기는 활동대사·걸음 환산 계수만 조정하는 곳이에요.</div>
     </div>` : ''}
 
     ${state.errorMsg ? `<div class="err-banner">⚠️ ${state.errorMsg}</div>` : ''}
+
+    ${goalCardHTML(goalDerived, goal)}
 
     <div class="datebar">
       <button class="nav" onclick="navDate(-1)">◀</button>
@@ -801,9 +916,9 @@ function render(){
       <div class="progress-wrap">
         <div class="progress-label"><span>🔥 칼로리 목표 달성률</span><b>${calPct}%</b></div>
         <div class="progress-bar"><div class="progress-fill" style="width:${Math.max(0,Math.min(100,calPct))}%"></div></div>
-        <div class="progress-label"><span>⚖️ 예상 감량 달성률</span><b>${kgPct}% (${kgLoss.toFixed(2)}kg / 목표 ${s.weeklyKgTarget}kg)</b></div>
+        <div class="progress-label"><span>⚖️ 예상 감량 달성률</span><b>${kgPct}% (${kgLoss.toFixed(2)}kg / 목표 ${weeklyKgTarget.toFixed(2)}kg)</b></div>
         <div class="progress-bar"><div class="progress-fill" style="width:${Math.max(0,Math.min(100,kgPct))}%"></div></div>
-        <div class="week-footer-note">주간 잔여 칼로리 합계: ${weeklyNet} kcal (목표 ${s.weeklyCalTarget} kcal 대비, 입력된 ${loggedDays.length}일 기준)</div>
+        <div class="week-footer-note">주간 잔여 칼로리 합계: ${weeklyNet} kcal (목표 ${Math.round(weeklyCalTarget)} kcal 대비, 입력된 ${loggedDays.length}일 기준)${!goalDerived?' · <span style="color:var(--coral);">🎯에서 목표를 설정하면 내 목표 기준으로 계산돼요 (지금은 예시값)</span>':''}</div>
       </div>` : `<div class="empty-note" style="margin-top:10px;">이번 주에 아직 입력된 날이 없어요.</div>`}
     </div>
 
@@ -816,6 +931,7 @@ function init(){
   state.settings = loadSettings();
   state.foodDB = loadOrSeedDB('foodDB', FOOD_DB_SEED);
   state.exerciseDB = loadOrSeedDB('exerciseDB', EXERCISE_DB_SEED);
+  state.goal = loadGoal();
   refreshDay();
   render();
 }
