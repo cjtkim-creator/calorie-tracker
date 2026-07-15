@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>5kg 감량 트래커</title>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
   :root{
     --bg:#FAF7F0; --card:#FFFFFF; --border:#E6E0D2; --ink:#22291F; --muted:#7A8175;
@@ -122,6 +123,15 @@
   .net-pos{color:var(--coral);}
   .err-banner{background:var(--coral-light);border:1px solid #F0C7B4;color:var(--coral);padding:8px 10px;border-radius:10px;font-size:11.5px;margin-bottom:12px;}
   .storage-note{font-size:10.5px;color:var(--muted);text-align:center;margin-top:18px;line-height:1.6;}
+
+  .sync-card{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  .sync-card .status-dot{width:9px;height:9px;border-radius:50%;background:#C6CBC1;flex:0 0 auto;}
+  .sync-card .status-dot.on{background:var(--green);}
+  .sync-card .sync-text{flex:1;min-width:180px;font-size:12px;color:var(--muted);}
+  .sync-btn{background:var(--blue-dark);color:#fff;border:none;border-radius:9px;padding:8px 14px;font-size:12.5px;font-weight:700;cursor:pointer;white-space:nowrap;}
+  .sync-btn:disabled{background:#AEBBD6;cursor:default;}
+  .sync-btn.secondary{background:#fff;color:var(--blue-dark);border:1px solid var(--blue-dark);}
+  .sync-btn.logout{background:#fff;color:var(--coral);border:1px solid var(--coral);}
 </style>
 </head>
 <body>
@@ -140,6 +150,11 @@ const MEAL_TYPES = [
   { key:'snack', label:'🥛 간식' }, { key:'dinner', label:'🥩 저녁 & 술자리' },
 ];
 const WD = ['일','월','화','수','목','금','토'];
+
+/* ---------------- Google Drive 동기화 설정 ---------------- */
+const GOOGLE_CLIENT_ID = '585218127760-ufekgnvkn598598ahh7kogr5mn04712p.apps.googleusercontent.com';
+const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+const DRIVE_FILE_NAME = 'calorie_tracker_data.json';
 
 /* ---------------- 기본 시드 데이터 (최초 1회만 저장소에 심어짐) ---------------- */
 const FOOD_DB_SEED = [
@@ -210,6 +225,7 @@ let state = {
   weekData: [], bodyHistory: [],
   settingsOpen: false, dbOpen: false,
   errorMsg: null,
+  accessToken: null, driveSignedIn: false, driveSyncing: false, driveFileId: null, driveEmail: null,
 };
 
 function emptyLog(){
@@ -313,6 +329,7 @@ function saveAndRefresh(){
   saveLog(dateKey(state.currentDate), state.currentLog);
   state.weekData = loadWeekData(state.currentDate, state.settings);
   state.bodyHistory = loadBodyHistory();
+  drivePushIfSignedIn();
   render();
 }
 
@@ -369,7 +386,9 @@ function saveSettingsForm(){
   };
   storageSet('settings', JSON.stringify(state.settings));
   state.settingsOpen = false;
-  refreshDay(); render();
+  refreshDay();
+  drivePushIfSignedIn();
+  render();
 }
 
 /* ---------------- DB 관리 액션 ---------------- */
@@ -399,6 +418,149 @@ function deleteDBEntry(kind, id){
 function saveDB(kind){
   if(kind==='food') storageSet('foodDB', JSON.stringify(state.foodDB));
   else storageSet('exerciseDB', JSON.stringify(state.exerciseDB));
+  drivePushIfSignedIn();
+}
+
+/* ---------------- Google Drive 동기화 ---------------- */
+let tokenClient = null;
+
+function ensureTokenClient(){
+  if(tokenClient) return tokenClient;
+  if(!(window.google && window.google.accounts && window.google.accounts.oauth2)) return null;
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_CLIENT_ID,
+    scope: DRIVE_SCOPE,
+    callback: (resp) => {
+      if(resp.error){ state.errorMsg = 'Google 로그인에 실패했어요: '+resp.error; render(); return; }
+      state.accessToken = resp.access_token;
+      driveSyncAfterLogin();
+    },
+  });
+  return tokenClient;
+}
+function driveLogin(){
+  const tc = ensureTokenClient();
+  if(!tc){ state.errorMsg = 'Google 로그인 준비 중이에요. 잠시 후 다시 눌러주세요.'; render(); return; }
+  state.errorMsg = null;
+  tc.requestAccessToken();
+}
+function driveLogout(){
+  try{ if(state.accessToken && window.google) google.accounts.oauth2.revoke(state.accessToken, ()=>{}); }catch(e){}
+  state.accessToken = null; state.driveSignedIn = false; state.driveFileId = null;
+  render();
+}
+
+async function driveFetch(url, options){
+  const opts = options || {};
+  opts.headers = Object.assign({ 'Authorization': 'Bearer '+state.accessToken }, opts.headers||{});
+  const res = await fetch(url, opts);
+  if(res.status === 401){
+    state.driveSignedIn = false;
+    state.accessToken = null;
+    throw new Error('AUTH_EXPIRED');
+  }
+  return res;
+}
+
+async function driveFindFile(){
+  const q = encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
+  const res = await driveFetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name)`);
+  const data = await res.json();
+  return (data.files && data.files[0]) ? data.files[0].id : null;
+}
+async function driveGetContent(fileId){
+  const res = await driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`);
+  return await res.json();
+}
+async function driveCreateFile(contentObj){
+  const boundary = 'calorietracker_boundary_'+Date.now();
+  const metadata = { name: DRIVE_FILE_NAME, mimeType: 'application/json' };
+  const body =
+    `--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(metadata)}\r\n` +
+    `--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(contentObj)}\r\n` +
+    `--${boundary}--`;
+  const res = await driveFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+    method: 'POST',
+    headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
+    body,
+  });
+  const data = await res.json();
+  return data.id;
+}
+async function driveUpdateFile(fileId, contentObj){
+  await driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(contentObj),
+  });
+}
+
+function gatherAllData(){
+  const logs = {};
+  for(const k of storageListPrefix('log:')){
+    const v = storageGet(k);
+    if(v){ try{ logs[k.slice(4)] = JSON.parse(v); }catch(e){} }
+  }
+  return { settings: state.settings, foodDB: state.foodDB, exerciseDB: state.exerciseDB, logs };
+}
+function applyAllData(blob){
+  if(!blob) return;
+  if(blob.settings) storageSet('settings', JSON.stringify(blob.settings));
+  if(blob.foodDB) storageSet('foodDB', JSON.stringify(blob.foodDB));
+  if(blob.exerciseDB) storageSet('exerciseDB', JSON.stringify(blob.exerciseDB));
+  if(blob.logs){ for(const d in blob.logs){ storageSet('log:'+d, JSON.stringify(blob.logs[d])); } }
+}
+
+async function driveSyncAfterLogin(){
+  state.driveSyncing = true; render();
+  try{
+    let fileId = storageGet('driveFileId') || (await driveFindFile());
+    if(fileId){
+      const remote = await driveGetContent(fileId);
+      applyAllData(remote);
+    } else {
+      fileId = await driveCreateFile(gatherAllData());
+    }
+    storageSet('driveFileId', fileId);
+    state.driveFileId = fileId;
+    state.driveSignedIn = true;
+    state.settings = loadSettings();
+    state.foodDB = loadOrSeedDB('foodDB', FOOD_DB_SEED);
+    state.exerciseDB = loadOrSeedDB('exerciseDB', EXERCISE_DB_SEED);
+    refreshDay();
+    state.errorMsg = null;
+  }catch(e){
+    console.error(e);
+    state.driveSignedIn = false;
+    state.errorMsg = (e.message==='AUTH_EXPIRED')
+      ? '로그인이 만료됐어요. 다시 로그인해주세요.'
+      : 'Google 드라이브 동기화 중 오류가 발생했어요. 다시 시도해주세요.';
+  }
+  state.driveSyncing = false;
+  render();
+}
+async function driveManualRefresh(){
+  if(!state.driveSignedIn || !state.driveFileId) return;
+  state.driveSyncing = true; render();
+  try{
+    const remote = await driveGetContent(state.driveFileId);
+    applyAllData(remote);
+    state.settings = loadSettings();
+    state.foodDB = loadOrSeedDB('foodDB', FOOD_DB_SEED);
+    state.exerciseDB = loadOrSeedDB('exerciseDB', EXERCISE_DB_SEED);
+    refreshDay();
+    state.errorMsg = null;
+  }catch(e){
+    console.error(e);
+    if(e.message==='AUTH_EXPIRED'){ state.errorMsg = '로그인이 만료됐어요. 다시 로그인해주세요.'; }
+    else { state.errorMsg = '불러오기에 실패했어요.'; }
+  }
+  state.driveSyncing = false;
+  render();
+}
+function drivePushIfSignedIn(){
+  if(!state.driveSignedIn || !state.driveFileId) return;
+  driveUpdateFile(state.driveFileId, gatherAllData()).catch(e=>console.error('drive push failed', e));
 }
 
 /* ---------------- 렌더링 ---------------- */
@@ -567,6 +729,18 @@ function render(){
       <input type="date" value="${dateKey(state.currentDate)}" onchange="onDatePick(this.value)">
     </div>
 
+    <div class="card sync-card">
+      <span class="status-dot ${state.driveSignedIn?'on':''}"></span>
+      ${state.driveSignedIn ? `
+        <span class="sync-text">✅ Google 드라이브에 동기화 연결됨 — 기기 간 자동 저장 중이에요.</span>
+        <button class="sync-btn secondary" ${state.driveSyncing?'disabled':''} onclick="driveManualRefresh()">${state.driveSyncing?'불러오는 중…':'🔄 지금 다시 불러오기'}</button>
+        <button class="sync-btn logout" onclick="driveLogout()">로그아웃</button>
+      ` : `
+        <span class="sync-text">☁️ 아직 이 기기에만 저장돼요. Google로 로그인하면 다른 기기와 자동 동기화돼요.</span>
+        <button class="sync-btn" ${state.driveSyncing?'disabled':''} onclick="driveLogin()">${state.driveSyncing?'연결 중…':'Google로 동기화 시작'}</button>
+      `}
+    </div>
+
     <div class="card">
       <h2>⚖️ 오늘 아침 체중 &amp; 허리둘레</h2>
       <div class="activity-row">
@@ -633,7 +807,7 @@ function render(){
       </div>` : `<div class="empty-note" style="margin-top:10px;">이번 주에 아직 입력된 날이 없어요.</div>`}
     </div>
 
-    <div class="storage-note">💾 모든 기록·DB는 이 브라우저(기기)에만 저장돼요. 다른 브라우저·다른 기기에서 열면 기록이 보이지 않아요.<br>기기 간 동기화는 다음 업데이트(구글 드라이브 연동)에서 추가될 예정입니다.</div>
+    <div class="storage-note">💾 이 브라우저(기기)에는 항상 자동 저장돼요.${state.driveSignedIn ? ' Google 드라이브에도 실시간으로 백업/동기화되고 있어요.' : ' 위의 "Google로 동기화 시작"을 누르면 다른 기기와도 데이터를 공유할 수 있어요.'}<br>⚠️ Google 로그인은 이 페이지를 새로 열 때마다 다시 눌러줘야 해요 (보안상 로그인 상태가 유지되지 않아요).</div>
   `;
 }
 
