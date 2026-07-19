@@ -21,6 +21,21 @@
   .brand .logo{width:34px;height:34px;border-radius:9px;background:var(--green);display:flex;align-items:center;justify-content:center;font-size:18px;}
   .brand h1{font-size:17px;margin:0;font-weight:800;letter-spacing:-0.2px;}
   .brand .tag{font-size:11px;color:var(--muted);margin-top:1px;}
+  .streak-badge{display:inline-block;background:linear-gradient(90deg,#FDBA74,#F97316);color:#fff;font-size:10.5px;font-weight:800;padding:2px 8px;border-radius:20px;margin-left:6px;vertical-align:middle;}
+
+  .report-card{background:linear-gradient(135deg,#FDF6EC,#fff);border:1px solid #EBD9A5;}
+  .report-grade-row{display:flex;align-items:center;gap:12px;margin-bottom:12px;}
+  .grade-badge{width:54px;height:54px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:800;color:#fff;flex:0 0 auto;}
+  .grade-badge.grade-A{background:#2F6F4E;}
+  .grade-badge.grade-B{background:#5B9BD5;}
+  .grade-badge.grade-C{background:#C9992E;}
+  .grade-badge.grade-D{background:#DD7A56;}
+  .grade-badge.grade-E{background:#9AA093;}
+  .grade-msg{font-size:12.5px;color:var(--ink);line-height:1.5;}
+  .report-row{margin-bottom:12px;}
+  .report-row-top{display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px;}
+  .report-row-top b{font-weight:800;}
+  .report-row-note{font-size:10.5px;color:var(--muted);margin-top:3px;}
   .icon-btns{display:flex;gap:6px;}
   .gear{width:36px;height:36px;border-radius:10px;border:1px solid var(--border);background:var(--card);cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;}
   .gear:hover{background:var(--green-light);}
@@ -435,6 +450,71 @@ function loadWeekData(refDate, settings){
     days.push({ date:d, key, weekday:WD[d.getDay()], totals: computeTotals(log, settings), hasData: hasAnyData(log), weightMorning: log.weightMorning, waistCm: log.waistCm });
   }
   return days;
+}
+
+/* ---------------- 연속 기록 스트릭 ---------------- */
+function computeStreak(){
+  let count = 0;
+  let d = new Date(); d.setHours(0,0,0,0);
+  if(!hasAnyData(loadLog(dateKey(d)))){ d.setDate(d.getDate()-1); }
+  for(let i=0;i<400;i++){
+    if(hasAnyData(loadLog(dateKey(d)))){ count++; d.setDate(d.getDate()-1); }
+    else break;
+  }
+  return count;
+}
+
+/* ---------------- 지난주 분석 리포트 ---------------- */
+const GRADE_MESSAGES = {
+  A: '완벽한 한 주였어요! 이 페이스 그대로 다음 주도 가볼까요? 🎉',
+  B: '정말 잘 하고 계세요! 조금만 더 다잡으면 다음 주엔 A도 노려볼 수 있어요 💪',
+  C: '이번 주는 무난하게 지나갔어요. 다음 주엔 부족했던 부분 하나만 신경 써봐요 🙂',
+  D: '바쁜 한 주였나 봐요. 완벽하지 않아도 괜찮아요, 다시 시작하면 됩니다 🌱',
+  E: '이번 주는 쉬어가는 주였네요. 너무 몰아붙이지 마시고, 다음 주에 다시 천천히 시작해봐요 🤍',
+};
+function getLastWeekDays(refDate){
+  const thisMonday = mondayOf(refDate);
+  const lastMonday = new Date(thisMonday); lastMonday.setDate(thisMonday.getDate()-7);
+  const days = [];
+  for(let i=0;i<7;i++){ const d = new Date(lastMonday); d.setDate(lastMonday.getDate()+i); days.push(d); }
+  return days;
+}
+function computeWeeklyReport(refDate, settings, goal){
+  const days = getLastWeekDays(refDate);
+  const logs = days.map(d=>loadLog(dateKey(d)));
+  const totalsArr = logs.map(l=>computeTotals(l, settings));
+  const loggedFlags = logs.map(l=>hasAnyData(l));
+  const loggedCount = loggedFlags.filter(Boolean).length;
+
+  const goalDerived = computeGoalDerived(goal);
+  const weeklyCalTarget = goalDerived ? goalDerived.weeklyCal : LEGACY_WEEKLY_CAL;
+  const weeklyNet = totalsArr.reduce((s,t,i)=> loggedFlags[i] ? s+t.net : s, 0);
+  const calScore = weeklyCalTarget ? (weeklyNet/weeklyCalTarget)*100 : 0;
+
+  const exerciseDays = logs.filter(l=>(l.exercises||[]).length>0).length;
+  const exerciseScore = (exerciseDays/7)*100;
+
+  const target = recommendedWaterMl();
+  const avgWater = totalsArr.reduce((s,t)=>s+t.waterTotal,0)/7;
+  const waterScore = target>0 ? (avgWater/target)*100 : 0;
+
+  const loggingScore = (loggedCount/7)*100;
+
+  const clip = v => Math.max(0, Math.min(100, v));
+  const overall = (clip(calScore)+clip(exerciseScore)+clip(waterScore)+clip(loggingScore))/4;
+  const grade = overall>=90?'A': overall>=75?'B': overall>=60?'C': overall>=40?'D':'E';
+
+  let weightStart=null, weightEnd=null;
+  for(let i=0;i<logs.length;i++){ if(logs[i].weightMorning){ weightStart=logs[i].weightMorning; break; } }
+  for(let i=logs.length-1;i>=0;i--){ if(logs[i].weightMorning){ weightEnd=logs[i].weightMorning; break; } }
+
+  return {
+    start: days[0], end: days[6], loggedCount,
+    calScore: Math.round(calScore), exerciseDays, exerciseScore: Math.round(exerciseScore),
+    avgWater: Math.round(avgWater), waterTarget: target, waterScore: Math.round(waterScore),
+    loggingScore: Math.round(loggingScore), overall: Math.round(overall), grade,
+    weightStart, weightEnd, weeklyNet, weeklyCalTarget: Math.round(weeklyCalTarget),
+  };
 }
 function loadBodyHistory(){
   const keys = storageListPrefix('log:');
@@ -946,6 +1026,39 @@ function nutritionCardHTML(totals){
     </div>` : `<div class="empty-note">${hasManualOnly?'직접입력한 음식은 영양소가 집계되지 않아요. DB에 있는 음식을 추가하면 자동으로 계산돼요.':'아직 오늘 먹은 음식이 없어요.'}</div>`}
   </div>`;
 }
+function scoreBarRow(label, scoreRaw, extra){
+  const score = Math.max(0, Math.min(100, scoreRaw));
+  return `
+  <div class="report-row">
+    <div class="report-row-top"><span>${label}</span><b>${Math.round(scoreRaw)}%</b></div>
+    <div class="progress-bar"><div class="progress-fill" style="width:${score}%"></div></div>
+    ${extra ? `<div class="report-row-note">${extra}</div>` : ''}
+  </div>`;
+}
+function weeklyReportCardHTML(r){
+  if(r.loggedCount===0){
+    return `
+    <div class="card report-card">
+      <h2>📊 지난주 리포트 <span style="font-weight:400;color:var(--muted);font-size:11.5px;">(${fmtMD(r.start)} ~ ${fmtMD(r.end)})</span></h2>
+      <div class="empty-note">지난주에는 기록이 없었어요. 이번 주부터 차곡차곡 기록해보시면, 다음 주에 여기서 리포트를 보실 수 있어요!</div>
+    </div>`;
+  }
+  const weightLine = (r.weightStart!=null && r.weightEnd!=null)
+    ? `<div class="report-row-note">체중 ${r.weightStart}kg → ${r.weightEnd}kg (${(r.weightEnd-r.weightStart)<=0?'':'+'}${(r.weightEnd-r.weightStart).toFixed(1)}kg)</div>` : '';
+  return `
+  <div class="card report-card">
+    <h2>📊 지난주 리포트 <span style="font-weight:400;color:var(--muted);font-size:11.5px;">(${fmtMD(r.start)} ~ ${fmtMD(r.end)})</span></h2>
+    <div class="report-grade-row">
+      <div class="grade-badge grade-${r.grade}">${r.grade}</div>
+      <div class="grade-msg">${GRADE_MESSAGES[r.grade]}</div>
+    </div>
+    ${scoreBarRow('🔥 칼로리 목표 달성률', r.calScore, `주간 잔여 ${r.weeklyNet}kcal / 목표 ${r.weeklyCalTarget}kcal`)}
+    ${scoreBarRow('🏃 운동 실천율', r.exerciseScore, `7일 중 ${r.exerciseDays}일 운동`)}
+    ${scoreBarRow('💧 수분 섭취율', r.waterScore, `일 평균 ${r.avgWater}ml / 권장 ${r.waterTarget}ml`)}
+    ${scoreBarRow('📝 기록 성실도', r.loggingScore, `7일 중 ${r.loggedCount}일 기록`)}
+    ${weightLine}
+  </div>`;
+}
 function goalCardHTML(derived, goal){
   if(!derived){
     return `
@@ -1042,12 +1155,17 @@ function render(){
   const weeklyKgTarget = goalDerived ? goalDerived.weeklyKg : LEGACY_WEEKLY_KG;
   const calPct = weeklyCalTarget ? Math.round((weeklyNet/weeklyCalTarget)*100) : 0;
   const kgPct = weeklyKgTarget ? Math.round((kgLoss/weeklyKgTarget)*100) : 0;
+  const streak = computeStreak();
+  const weeklyReport = computeWeeklyReport(state.currentDate, s, goal);
 
   app.innerHTML = `
     <div class="top">
       <div class="brand">
         <div class="logo">🔥</div>
-        <div><h1>살까기 프로젝트 "니가 제일 덜 나가!"</h1><div class="tag">오늘 먹고 움직인 만큼, 자동으로 계산돼요</div></div>
+        <div>
+          <h1>살까기 프로젝트 "니가 제일 덜 나가!"</h1>
+          <div class="tag">오늘 먹고 움직인 만큼, 자동으로 계산돼요 ${streak>0?`<span class="streak-badge">🔥 ${streak}일 연속 기록 중</span>`:''}</div>
+        </div>
       </div>
       <div class="icon-btns">
         <button class="gear" onclick="toggleGoal()" title="목표 설정">🎯</button>
@@ -1211,6 +1329,8 @@ function render(){
         <div class="week-footer-note">주간 잔여 칼로리 합계: ${weeklyNet} kcal (목표 ${Math.round(weeklyCalTarget)} kcal 대비, 입력된 ${loggedDays.length}일 기준)${!goalDerived?' · <span style="color:var(--coral);">🎯에서 목표를 설정하면 내 목표 기준으로 계산돼요 (지금은 예시값)</span>':''}</div>
       </div>` : `<div class="empty-note" style="margin-top:10px;">이번 주에 아직 입력된 날이 없어요.</div>`}
     </div>
+
+    ${weeklyReportCardHTML(weeklyReport)}
 
     <div class="storage-note">💾 이 브라우저(기기)에는 항상 자동 저장돼요.${state.driveSignedIn ? ' Google 드라이브에도 실시간으로 백업/동기화되고 있어요.' : ' 위의 "Google로 동기화 시작"을 누르면 다른 기기와도 데이터를 공유할 수 있어요.'}<br>⚠️ Google 로그인은 이 페이지를 새로 열 때마다 다시 눌러줘야 해요 (보안상 로그인 상태가 유지되지 않아요).</div>
   `;
