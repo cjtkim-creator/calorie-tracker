@@ -50,6 +50,15 @@
   .db-add-row input.macro-in{width:52px;}
   .db-add-row button{background:var(--blue-dark);color:#fff;border:none;border-radius:7px;padding:0 10px;font-size:12px;font-weight:700;cursor:pointer;}
   .db-col-hint{font-size:10px;color:var(--muted);margin:-4px 0 6px;}
+  .rec-chip-row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;}
+  .rec-chip{background:var(--green-light);color:var(--green-dark);border:1px solid #C9E0CE;border-radius:20px;padding:4px 11px;font-size:11.5px;cursor:pointer;font-weight:600;}
+  .rec-chip:hover{background:#D8ECDD;}
+  .pref-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;}
+  .pref-chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--border);border-radius:20px;padding:5px 12px;font-size:12px;cursor:pointer;background:#fff;}
+  .pref-chip input{margin:0;}
+  .pref-chip.active{background:var(--green-light);border-color:var(--green);color:var(--green-dark);font-weight:700;}
+  select.tag-select{font-size:11px;border-radius:6px;border:1px solid var(--border);padding:3px 4px;max-width:98px;}
+  .db-add-row select.tag-select{max-width:120px;}
   .db-list{max-height:230px;overflow-y:auto;border-top:1px dashed var(--border);padding-top:4px;}
   .db-list::-webkit-scrollbar{width:6px;}
   .db-list::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px;}
@@ -174,7 +183,7 @@
    칼로리: 음식/운동 DB를 앱 안에서 직접 추가·관리 가능
    ============================================================ */
 
-const DEFAULT_SETTINGS = { activityBaseline: 2100, stepsKcalFactor: 0.045, assumedWeight: 70, waterMlPerKg: 33 };
+const DEFAULT_SETTINGS = { activityBaseline: 2100, stepsKcalFactor: 0.045, assumedWeight: 70, waterMlPerKg: 33, dietStyle: 'balanced', exerciseTags: [] };
 const LEGACY_WEEKLY_CAL = -6070;
 const LEGACY_WEEKLY_KG = 0.79;
 const MEAL_TYPES = [
@@ -262,20 +271,27 @@ const FOOD_DB_SEED = [
   { name:'탕수육 1인분', kcal:700, carb:60, fat:35, protein:30 },
 ];
 
+const EXERCISE_TAGS = [
+  { key:'gym', label:'🏋 헬스장 기구' },
+  { key:'home', label:'🏠 홈트/소도구' },
+  { key:'bodyweight', label:'🤸 맨몸운동' },
+  { key:'cardio', label:'🏃 유산소' },
+  { key:'sports', label:'⚽ 구기종목' },
+];
 const EXERCISE_DB_SEED = [
-  { name:'로잉머신 20분', kcal:180 }, { name:'스피닝 바이크 30분(인터벌)', kcal:320 },
-  { name:'아령 어깨 운동 20분', kcal:100 }, { name:'AB슬라이드 3세트', kcal:30 },
-  { name:'배드민턴 1시간', kcal:400 }, { name:'수영 30분', kcal:300 },
-  { name:'걷기 30분', kcal:120 }, { name:'걷기 1000보 추가', kcal:40 },
-  { name:'러닝(조깅) 30분', kcal:300 }, { name:'러닝 5km', kcal:350 },
-  { name:'자전거 30분', kcal:250 }, { name:'요가 1시간', kcal:180 },
-  { name:'필라테스 1시간', kcal:200 }, { name:'웨이트 트레이닝 1시간', kcal:300 },
-  { name:'스쿼트 30개(3세트)', kcal:30 }, { name:'계단 오르기 10분', kcal:100 },
-  { name:'등산 2시간', kcal:700 }, { name:'훌라후프 15분', kcal:100 },
-  { name:'줄넘기 10분', kcal:120 }, { name:'축구 1시간', kcal:500 },
-  { name:'농구 1시간', kcal:500 }, { name:'테니스 1시간', kcal:400 },
-  { name:'탁구 1시간', kcal:250 }, { name:'골프(필드) 18홀', kcal:400 },
-  { name:'스크린골프 1시간', kcal:150 }, { name:'가벼운 산책 30분', kcal:90 },
+  { name:'로잉머신 20분', kcal:180, tag:'gym' }, { name:'스피닝 바이크 30분(인터벌)', kcal:320, tag:'gym' },
+  { name:'아령 어깨 운동 20분', kcal:100, tag:'home' }, { name:'AB슬라이드 3세트', kcal:30, tag:'home' },
+  { name:'배드민턴 1시간', kcal:400, tag:'sports' }, { name:'수영 30분', kcal:300, tag:'cardio' },
+  { name:'걷기 30분', kcal:120, tag:'cardio' }, { name:'걷기 1000보 추가', kcal:40, tag:'cardio' },
+  { name:'러닝(조깅) 30분', kcal:300, tag:'cardio' }, { name:'러닝 5km', kcal:350, tag:'cardio' },
+  { name:'자전거 30분', kcal:250, tag:'cardio' }, { name:'요가 1시간', kcal:180, tag:'bodyweight' },
+  { name:'필라테스 1시간', kcal:200, tag:'bodyweight' }, { name:'웨이트 트레이닝 1시간', kcal:300, tag:'gym' },
+  { name:'스쿼트 30개(3세트)', kcal:30, tag:'bodyweight' }, { name:'계단 오르기 10분', kcal:100, tag:'cardio' },
+  { name:'등산 2시간', kcal:700, tag:'cardio' }, { name:'훌라후프 15분', kcal:100, tag:'home' },
+  { name:'줄넘기 10분', kcal:120, tag:'home' }, { name:'축구 1시간', kcal:500, tag:'sports' },
+  { name:'농구 1시간', kcal:500, tag:'sports' }, { name:'테니스 1시간', kcal:400, tag:'sports' },
+  { name:'탁구 1시간', kcal:250, tag:'sports' }, { name:'골프(필드) 18홀', kcal:400, tag:'sports' },
+  { name:'스크린골프 1시간', kcal:150, tag:'sports' }, { name:'가벼운 산책 30분', kcal:90, tag:'cardio' },
 ];
 
 function normalizeName(s){
@@ -338,6 +354,19 @@ function loadOrSeedDB(key, seed){
   const seeded = seed.map(f=>({ id:uid(), ...f }));
   storageSet(key, JSON.stringify(seeded));
   return seeded;
+}
+function migrateExerciseDBTags(list){
+  const byName = {};
+  EXERCISE_DB_SEED.forEach(f=>{ byName[f.name]=f; });
+  let changed = false;
+  list.forEach(item=>{
+    if(item.tag===undefined){
+      const seed = byName[item.name];
+      item.tag = seed ? seed.tag : null;
+      changed = true;
+    }
+  });
+  return changed;
 }
 function migrateFoodDBMacros(list){
   const byName = {};
@@ -465,6 +494,14 @@ function addExerciseItem(){
   state.currentLog.exercises.push(item);
   saveAndRefresh();
 }
+function addExerciseFromChip(name){
+  const dbHit = findInDB(state.exerciseDB, name);
+  const item = dbHit
+    ? { id:uid(), text:dbHit.name, kcal:dbHit.kcal, source:'db' }
+    : { id:uid(), text:name, kcal:0, source:'manual' };
+  state.currentLog.exercises.push(item);
+  saveAndRefresh();
+}
 function removeItem(kind, mealKey, id){
   if(kind==='food'){ state.currentLog.meals[mealKey] = state.currentLog.meals[mealKey].filter(i=>i.id!==id); }
   else { state.currentLog.exercises = state.currentLog.exercises.filter(i=>i.id!==id); }
@@ -500,11 +537,14 @@ function toggleDB(){ state.dbOpen=!state.dbOpen; state.settingsOpen=false; state
 function toggleGoal(){ state.goalOpen=!state.goalOpen; state.settingsOpen=false; state.dbOpen=false; render(); }
 function saveSettingsForm(){
   const g = id => Number(document.getElementById(id).value);
+  const checkedTags = Array.from(document.querySelectorAll('.ex-tag-check:checked')).map(el=>el.value);
   state.settings = {
     activityBaseline: g('set-activity') || DEFAULT_SETTINGS.activityBaseline,
     stepsKcalFactor: g('set-stepsFactor') || DEFAULT_SETTINGS.stepsKcalFactor,
     assumedWeight: g('set-assumedWeight') || DEFAULT_SETTINGS.assumedWeight,
     waterMlPerKg: g('set-waterMlPerKg') || DEFAULT_SETTINGS.waterMlPerKg,
+    dietStyle: document.getElementById('set-dietStyle').value || 'balanced',
+    exerciseTags: checkedTags,
   };
   storageSet('settings', JSON.stringify(state.settings));
   state.settingsOpen = false;
@@ -570,6 +610,8 @@ function addDBEntry(kind){
     entry.carb = Number(document.getElementById('new-food-carb').value)||0;
     entry.fat = Number(document.getElementById('new-food-fat').value)||0;
     entry.protein = Number(document.getElementById('new-food-protein').value)||0;
+  } else {
+    entry.tag = document.getElementById('new-exercise-tag').value || null;
   }
   list.push(entry);
   list.sort((a,b)=> a.name.localeCompare(b.name, 'ko'));
@@ -580,6 +622,11 @@ function addDBEntry(kind){
     document.getElementById('new-food-protein').value='';
   }
   saveDB(kind); render();
+}
+function updateDBEntryTag(id, value){
+  const it = state.exerciseDB.find(i=>i.id===id);
+  if(it) it.tag = value || null;
+  saveDB('exercise'); render();
 }
 function updateDBEntryKcal(kind, id, value){
   const list = kind==='food' ? state.foodDB : state.exerciseDB;
@@ -711,6 +758,7 @@ async function driveSyncAfterLogin(){
     state.foodDB = loadOrSeedDB('foodDB', FOOD_DB_SEED);
   if(migrateFoodDBMacros(state.foodDB)) saveDB('food');
     state.exerciseDB = loadOrSeedDB('exerciseDB', EXERCISE_DB_SEED);
+  if(migrateExerciseDBTags(state.exerciseDB)) saveDB('exercise');
     state.goal = loadGoal();
     refreshDay();
     state.errorMsg = null;
@@ -734,6 +782,7 @@ async function driveManualRefresh(){
     state.foodDB = loadOrSeedDB('foodDB', FOOD_DB_SEED);
   if(migrateFoodDBMacros(state.foodDB)) saveDB('food');
     state.exerciseDB = loadOrSeedDB('exerciseDB', EXERCISE_DB_SEED);
+  if(migrateExerciseDBTags(state.exerciseDB)) saveDB('exercise');
     state.goal = loadGoal();
     refreshDay();
     state.errorMsg = null;
@@ -766,25 +815,47 @@ function itemRowHTML(kind, mealKey, item){
     <button class="del" onclick="removeItem('${kind}', ${mealKey?`'${mealKey}'`:null}, '${item.id}')">✕</button>
   </div>`;
 }
+const DIET_STYLES = [
+  { key:'balanced', label:'균형식' },
+  { key:'lowcarb', label:'저탄고지' },
+  { key:'highprotein', label:'고단백' },
+];
+const PLACEHOLDER_SUGGESTIONS = {
+  balanced:     { breakfast:'예: 사과, 당근, 달걀 2개', lunch:'예: 샐러드, 닭가슴살', snack:'예: 두유, 견과류', dinner:'예: 생선, 나물 반찬' },
+  lowcarb:      { breakfast:'예: 달걀, 아보카도, 베이컨', lunch:'예: 삼겹살, 쌈채소', snack:'예: 치즈, 견과류', dinner:'예: 소고기, 버터야채' },
+  highprotein:  { breakfast:'예: 달걀흰자, 닭가슴살', lunch:'예: 닭가슴살, 현미밥', snack:'예: 두유, 프로틴바', dinner:'예: 생선, 두부' },
+};
 function mealBoxHTML(m){
   const items = state.currentLog.meals[m.key] || [];
   const subtotal = items.reduce((s,i)=>s+(Number(i.kcal)||0),0);
+  const style = state.settings.dietStyle || 'balanced';
+  const placeholder = (PLACEHOLDER_SUGGESTIONS[style] || PLACEHOLDER_SUGGESTIONS.balanced)[m.key];
   return `
   <div class="meal-box">
     <div class="mtitle"><span>${m.label}</span><span class="subtotal">${subtotal} kcal</span></div>
     <div class="add-row">
-      <input type="text" id="add-input-${m.key}" placeholder="예: 사과 1개, 삶은 계란 2개" onkeydown="if(event.key==='Enter'){addMealItem('${m.key}')}">
+      <input type="text" id="add-input-${m.key}" placeholder="${placeholder}" onkeydown="if(event.key==='Enter'){addMealItem('${m.key}')}">
       <button onclick="addMealItem('${m.key}')">추가</button>
     </div>
     ${items.length===0 ? '<div class="empty-note">아직 입력한 음식이 없어요.</div>' : items.map(i=>itemRowHTML('food', m.key, i)).join('')}
   </div>`;
 }
+function recommendedExercises(){
+  const tags = state.settings.exerciseTags || [];
+  let pool = state.exerciseDB;
+  if(tags.length>0){ pool = pool.filter(e=>tags.includes(e.tag)); }
+  if(pool.length===0) pool = state.exerciseDB;
+  // 셔플 없이 앞에서 몇 개만 (일관성 있게 보이도록 이름 기준 정렬 후 선택)
+  return pool.slice(0, 5);
+}
 function exerciseBoxHTML(){
   const items = state.currentLog.exercises || [];
   const subtotal = items.reduce((s,i)=>s+(Number(i.kcal)||0),0);
+  const recs = recommendedExercises();
   return `
   <div class="meal-box" style="margin-bottom:10px;">
     <div class="mtitle"><span>🏋 오늘의 운동</span><span class="subtotal">${subtotal} kcal</span></div>
+    ${recs.length>0 ? `<div class="rec-chip-row">${recs.map(r=>`<button class="rec-chip" onclick="addExerciseFromChip('${r.name.replace(/'/g,"\\'")}')">${escapeHtml(r.name)}</button>`).join('')}</div>` : ''}
     <div class="add-row">
       <input type="text" id="add-input-exercise" placeholder="예: 로잉머신 20분" onkeydown="if(event.key==='Enter'){addExerciseItem()}">
       <button onclick="addExerciseItem()">추가</button>
@@ -916,11 +987,15 @@ function dbRowHTML(kind, entry){
       <button class="del" onclick="deleteDBEntry('${kind}', '${entry.id}')">✕</button>
     </div>`;
   }
+  const tagOptions = EXERCISE_TAGS.map(t=>`<option value="${t.key}" ${entry.tag===t.key?'selected':''}>${t.label}</option>`).join('');
   return `
   <div class="db-row">
     <span class="dname" title="${escapeHtml(entry.name)}">${escapeHtml(entry.name)}</span>
     <input type="number" value="${entry.kcal}" onchange="updateDBEntryKcal('${kind}', '${entry.id}', this.value)">
     <span class="u">kcal</span>
+    <select class="tag-select" onchange="updateDBEntryTag('${entry.id}', this.value)">
+      <option value="">태그없음</option>${tagOptions}
+    </select>
     <button class="del" onclick="deleteDBEntry('${kind}', '${entry.id}')">✕</button>
   </div>`;
 }
@@ -929,14 +1004,19 @@ function dbColumnHTML(kind, title, list){
       <input type="number" id="new-food-carb" placeholder="탄(g)" class="macro-in">
       <input type="number" id="new-food-fat" placeholder="지(g)" class="macro-in">
       <input type="number" id="new-food-protein" placeholder="단(g)" class="macro-in">` : '';
+  const exerciseTagSelect = kind==='exercise' ? `
+      <select id="new-exercise-tag" class="tag-select">
+        <option value="">태그없음</option>
+        ${EXERCISE_TAGS.map(t=>`<option value="${t.key}">${t.label}</option>`).join('')}
+      </select>` : '';
   return `
   <div class="db-col">
     <div class="db-col-title"><span>${title}</span><span style="color:var(--muted);font-weight:600;">${list.length}개</span></div>
-    ${kind==='food' ? '<div class="db-col-hint">칼로리 / 탄수화물(g) / 지방(g) / 단백질(g) 순서예요</div>' : ''}
+    ${kind==='food' ? '<div class="db-col-hint">칼로리 / 탄수화물(g) / 지방(g) / 단백질(g) 순서예요</div>' : '<div class="db-col-hint">태그를 지정하면 "추천 운동"에 활용돼요</div>'}
     <div class="db-add-row">
       <input type="text" id="new-${kind}-name" placeholder="이름">
       <input type="number" id="new-${kind}-kcal" placeholder="kcal">
-      ${foodMacroInputs}
+      ${foodMacroInputs}${exerciseTagSelect}
       <button onclick="addDBEntry('${kind}')">추가</button>
     </div>
     <div class="db-list">
@@ -1018,8 +1098,24 @@ function render(){
         <div><label>체중 미입력 시 가정 체중(kg) — 수분 권장량 계산용</label><input type="number" id="set-assumedWeight" value="${s.assumedWeight}"></div>
         <div><label>체중 1kg당 수분 권장량(ml)</label><input type="number" id="set-waterMlPerKg" value="${s.waterMlPerKg}"></div>
       </div>
-      <button class="save-btn" onclick="saveSettingsForm()">저장</button>
-      <div class="hint">주간 목표 칼로리/감량은 이제 🎯 목표 설정에서 자동으로 계산돼요. 여기는 활동대사·걸음 환산 계수만 조정하는 곳이에요.</div>
+
+      <h3 style="margin-top:16px;">🍱 다이어트 스타일</h3>
+      <select id="set-dietStyle" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);font-size:13px;">
+        ${DIET_STYLES.map(d=>`<option value="${d.key}" ${s.dietStyle===d.key?'selected':''}>${d.label}</option>`).join('')}
+      </select>
+      <div class="hint" style="margin-top:6px;">식사 입력칸의 추천 문구가 선택한 스타일에 맞춰 바뀌어요.</div>
+
+      <h3 style="margin-top:16px;">🏋 운동 선호 · 보유 기구</h3>
+      <div class="pref-row">
+        ${EXERCISE_TAGS.map(t=>`
+          <label class="pref-chip ${(s.exerciseTags||[]).includes(t.key)?'active':''}">
+            <input type="checkbox" class="ex-tag-check" value="${t.key}" ${(s.exerciseTags||[]).includes(t.key)?'checked':''}>${t.label}
+          </label>`).join('')}
+      </div>
+      <div class="hint" style="margin-top:6px;">체크한 항목 기준으로 "오늘의 운동" 위에 추천 운동이 표시돼요. 아무것도 선택하지 않으면 전체 중에서 보여줘요.</div>
+
+      <button class="save-btn" style="margin-top:14px;" onclick="saveSettingsForm()">저장</button>
+      <div class="hint">주간 목표 칼로리/감량은 이제 🎯 목표 설정에서 자동으로 계산돼요. 여기는 활동대사·걸음 환산 계수 등만 조정하는 곳이에요.</div>
     </div>` : ''}
 
     ${state.errorMsg ? `<div class="err-banner">⚠️ ${state.errorMsg}</div>` : ''}
@@ -1126,6 +1222,7 @@ function init(){
   state.foodDB = loadOrSeedDB('foodDB', FOOD_DB_SEED);
   if(migrateFoodDBMacros(state.foodDB)) saveDB('food');
   state.exerciseDB = loadOrSeedDB('exerciseDB', EXERCISE_DB_SEED);
+  if(migrateExerciseDBTags(state.exerciseDB)) saveDB('exercise');
   state.goal = loadGoal();
   refreshDay();
   render();
