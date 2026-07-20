@@ -144,6 +144,9 @@
   .progress-label b{font-weight:800;}
   .progress-bar{height:10px;background:#EFEBE0;border-radius:6px;overflow:hidden;margin-bottom:12px;}
   .progress-fill{height:100%;border-radius:6px;background:var(--green);transition:width .4s ease;}
+  .progress-fill.macro-fill-carb{background:#5B9BD5;}
+  .progress-fill.macro-fill-fat{background:#ED9D5D;}
+  .progress-fill.macro-fill-protein{background:#7EBF7E;}
   .week-footer-note{font-size:11px;color:var(--muted);margin-top:2px;}
 
   .net-neg{color:var(--green-dark);}
@@ -198,7 +201,12 @@
    칼로리: 음식/운동 DB를 앱 안에서 직접 추가·관리 가능
    ============================================================ */
 
-const DEFAULT_SETTINGS = { activityBaseline: 2100, stepsKcalFactor: 0.045, assumedWeight: 70, waterMlPerKg: 33, dietStyle: 'balanced', exerciseTags: [] };
+const DEFAULT_SETTINGS = { activityBaseline: 2100, stepsKcalFactor: 0.045, assumedWeight: 70, waterMlPerKg: 33, foodWaterMl: 800, dietStyle: 'balanced', exerciseTags: [] };
+const DIET_MACRO_RATIOS = {
+  balanced:     { carb:50, protein:20, fat:30 },
+  lowcarb:      { carb:5,  protein:20, fat:75 },
+  highprotein:  { carb:40, protein:35, fat:25 },
+};
 const LEGACY_WEEKLY_CAL = -6070;
 const LEGACY_WEEKLY_KG = 0.79;
 const MEAL_TYPES = [
@@ -609,7 +617,9 @@ function currentWeightForCalc(){
   return state.settings.assumedWeight || 70;
 }
 function recommendedWaterMl(){
-  return Math.round(currentWeightForCalc() * (state.settings.waterMlPerKg||33) / 50) * 50;
+  const total = currentWeightForCalc() * (state.settings.waterMlPerKg||33);
+  const net = total - (state.settings.foodWaterMl||0);
+  return Math.max(0, Math.round(net / 50) * 50);
 }
 
 function toggleSettings(){ state.settingsOpen=!state.settingsOpen; state.dbOpen=false; state.goalOpen=false; render(); }
@@ -623,6 +633,7 @@ function saveSettingsForm(){
     stepsKcalFactor: g('set-stepsFactor') || DEFAULT_SETTINGS.stepsKcalFactor,
     assumedWeight: g('set-assumedWeight') || DEFAULT_SETTINGS.assumedWeight,
     waterMlPerKg: g('set-waterMlPerKg') || DEFAULT_SETTINGS.waterMlPerKg,
+    foodWaterMl: g('set-foodWaterMl') || 0,
     dietStyle: document.getElementById('set-dietStyle').value || 'balanced',
     exerciseTags: checkedTags,
   };
@@ -990,7 +1001,7 @@ function waterCardHTML(totals){
   const pct = target>0 ? Math.round((totals.waterTotal/target)*100) : 0;
   return `
   <div class="card water-card">
-    <h2>💧 오늘 수분 섭취 <span style="font-weight:400;color:var(--muted);font-size:11.5px;">(권장 ${target}ml 기준 ${currentWeightForCalc()}kg)</span></h2>
+    <h2>💧 오늘 수분(물) 섭취 <span style="font-weight:400;color:var(--muted);font-size:11.5px;">(권장 ${target}ml · ${currentWeightForCalc()}kg 기준, 음식 수분 ${state.settings.foodWaterMl||0}ml 제외)</span></h2>
     <div class="water-row">
       <div class="water-box"><div class="wk">🌅 오전</div><input type="number" min="0" step="50" value="${w.morning}" onchange="updateWater('morning', this.value)"><span class="wu">ml</span></div>
       <div class="water-box"><div class="wk">☀️ 오후</div><input type="number" min="0" step="50" value="${w.afternoon}" onchange="updateWater('afternoon', this.value)"><span class="wu">ml</span></div>
@@ -1000,30 +1011,45 @@ function waterCardHTML(totals){
     <div class="progress-bar"><div class="progress-fill" style="width:${Math.max(0,Math.min(100,pct))}%;background:#3B82C4;"></div></div>
   </div>`;
 }
-function nutritionCardHTML(totals){
-  const carbCal = totals.carb*4, proteinCal = totals.protein*4, fatCal = totals.fat*9;
-  const macroCalTotal = carbCal+proteinCal+fatCal;
-  const pct = v => macroCalTotal>0 ? Math.round(v/macroCalTotal*100) : 0;
-  const hasManualOnly = macroCalTotal===0 && totals.intake>0;
+function topFoodsByMacro(field, n=3){
+  return [...state.foodDB]
+    .filter(f=>(f[field]||0)>0)
+    .sort((a,b)=>(b[field]||0)-(a[field]||0))
+    .slice(0,n)
+    .map(f=>f.name.replace(/\([^)]*\)/g,'').trim());
+}
+function macroTargets(settings, totals, goalDerived){
+  const style = settings.dietStyle || 'balanced';
+  const ratio = DIET_MACRO_RATIOS[style] || DIET_MACRO_RATIOS.balanced;
+  const weeklyCalTarget = goalDerived ? goalDerived.weeklyCal : LEGACY_WEEKLY_CAL;
+  const dailyNetTarget = weeklyCalTarget/7;
+  const dailyIntakeTarget = Math.max(1200, Math.round(totals.burn + dailyNetTarget));
+  return {
+    style, ratio, dailyIntakeTarget,
+    carbG: Math.round(dailyIntakeTarget*ratio.carb/100/4),
+    proteinG: Math.round(dailyIntakeTarget*ratio.protein/100/4),
+    fatG: Math.round(dailyIntakeTarget*ratio.fat/100/9),
+  };
+}
+function macroTargetRow(label, actual, target, cls, foods){
+  const pct = target>0 ? Math.round(actual/target*100) : 0;
+  return `
+  <div class="report-row">
+    <div class="report-row-top"><span>${label}</span><b>${actual.toFixed(0)}g / 목표 ${target}g (${pct}%)</b></div>
+    <div class="progress-bar"><div class="progress-fill ${cls}" style="width:${Math.max(0,Math.min(100,pct))}%"></div></div>
+    ${foods.length>0 ? `<div class="report-row-note">추천 음식: ${foods.join(', ')}</div>` : ''}
+  </div>`;
+}
+function nutritionCardHTML(totals, settings, goalDerived){
+  const styleLabel = (DIET_STYLES.find(d=>d.key===(settings.dietStyle||'balanced'))||{}).label || '균형식';
+  const t = macroTargets(settings, totals, goalDerived);
   return `
   <div class="card">
-    <h2>🥗 오늘의 영양소</h2>
-    <div class="goal-row">
-      <div class="goal-stat"><div class="gk">탄수화물</div><div class="gv">${totals.carb.toFixed(1)}g</div></div>
-      <div class="goal-stat"><div class="gk">지방</div><div class="gv">${totals.fat.toFixed(1)}g</div></div>
-      <div class="goal-stat"><div class="gk">단백질</div><div class="gv">${totals.protein.toFixed(1)}g</div></div>
-    </div>
-    ${macroCalTotal>0 ? `
-    <div class="macro-bar">
-      <div class="macro-seg carb" style="width:${pct(carbCal)}%;" title="탄수화물 ${pct(carbCal)}%"></div>
-      <div class="macro-seg fat" style="width:${pct(fatCal)}%;" title="지방 ${pct(fatCal)}%"></div>
-      <div class="macro-seg protein" style="width:${pct(proteinCal)}%;" title="단백질 ${pct(proteinCal)}%"></div>
-    </div>
-    <div class="macro-legend">
-      <span><i class="dot carb"></i>탄수화물 ${pct(carbCal)}%</span>
-      <span><i class="dot fat"></i>지방 ${pct(fatCal)}%</span>
-      <span><i class="dot protein"></i>단백질 ${pct(proteinCal)}%</span>
-    </div>` : `<div class="empty-note">${hasManualOnly?'직접입력한 음식은 영양소가 집계되지 않아요. DB에 있는 음식을 추가하면 자동으로 계산돼요.':'아직 오늘 먹은 음식이 없어요.'}</div>`}
+    <h2>🥗 오늘의 영양소 <span style="font-weight:400;color:var(--muted);font-size:11.5px;">(${styleLabel} 기준, 목표 ${t.dailyIntakeTarget}kcal)</span></h2>
+    ${macroTargetRow('🍞 탄수화물', totals.carb, t.carbG, 'macro-fill-carb', topFoodsByMacro('carb'))}
+    ${macroTargetRow('🥑 지방', totals.fat, t.fatG, 'macro-fill-fat', topFoodsByMacro('fat'))}
+    ${macroTargetRow('🍗 단백질', totals.protein, t.proteinG, 'macro-fill-protein', topFoodsByMacro('protein'))}
+    <div class="hint" style="margin-top:2px;">직접입력한 음식은 영양소가 집계되지 않아요. 정확도를 높이려면 📚 DB에 등록된 음식을 사용해주세요.</div>
   </div>`;
 }
 function scoreBarRow(label, scoreRaw, extra){
@@ -1215,6 +1241,7 @@ function render(){
         <div><label>걸음당 소모 칼로리 (kcal/걸음)</label><input type="number" step="0.001" id="set-stepsFactor" value="${s.stepsKcalFactor}"></div>
         <div><label>체중 미입력 시 가정 체중(kg) — 수분 권장량 계산용</label><input type="number" id="set-assumedWeight" value="${s.assumedWeight}"></div>
         <div><label>체중 1kg당 수분 권장량(ml)</label><input type="number" id="set-waterMlPerKg" value="${s.waterMlPerKg}"></div>
+        <div><label>음식으로 섭취하는 수분(ml/일) — 물 권장량에서 제외</label><input type="number" id="set-foodWaterMl" value="${s.foodWaterMl}"></div>
       </div>
 
       <h3 style="margin-top:16px;">🍱 다이어트 스타일</h3>
@@ -1288,7 +1315,7 @@ function render(){
       <div class="sum-card ${netClass}"><div class="lbl">⚖️ 잔여 칼로리</div><div class="val">${totals.net>0?'+':''}${totals.net}</div><div class="sub">${totals.net<0?'↓ 감소 방향':'↑ 적자 아님'}</div></div>
     </div>
 
-    ${nutritionCardHTML(totals)}
+    ${nutritionCardHTML(totals, s, goalDerived)}
 
     <div class="card">
       <h2>🍽 오늘의 식사</h2>
