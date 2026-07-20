@@ -23,6 +23,14 @@
   .brand .tag{font-size:11px;color:var(--muted);margin-top:1px;}
   .streak-badge{display:inline-block;background:linear-gradient(90deg,#FDBA74,#F97316);color:#fff;font-size:10.5px;font-weight:800;padding:2px 8px;border-radius:20px;margin-left:6px;vertical-align:middle;}
 
+  .greet-overlay{position:fixed;inset:0;background:rgba(34,41,31,0.55);display:flex;align-items:center;justify-content:center;z-index:9999;padding:20px;}
+  .greet-modal{background:#fff;border-radius:20px;max-width:340px;width:100%;padding:26px 22px 22px;text-align:center;box-shadow:0 20px 50px rgba(0,0,0,0.25);animation:greetPop .25s ease;}
+  @keyframes greetPop{from{transform:scale(.92);opacity:0;}to{transform:scale(1);opacity:1;}}
+  .greet-mascot{width:92px;height:92px;margin:0 auto 14px;display:block;}
+  .greet-text{font-size:14.5px;line-height:1.65;color:var(--ink);margin-bottom:20px;font-weight:600;}
+  .greet-btn{background:var(--green);color:#fff;border:none;border-radius:12px;padding:11px 30px;font-size:13.5px;font-weight:700;cursor:pointer;}
+  .greet-btn:hover{background:var(--green-dark);}
+
   .report-card{background:linear-gradient(135deg,#FDF6EC,#fff);border:1px solid #EBD9A5;}
   .report-grade-row{display:flex;align-items:center;gap:12px;margin-bottom:12px;}
   .grade-badge{width:54px;height:54px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:26px;font-weight:800;color:#fff;flex:0 0 auto;}
@@ -347,6 +355,7 @@ let state = {
   settingsOpen: false, dbOpen: false,
   errorMsg: null,
   accessToken: null, driveSignedIn: false, driveSyncing: false, driveFileId: null, driveEmail: null,
+  showGreeting: true, greetingText: '',
 };
 
 function emptyLog(){
@@ -524,6 +533,61 @@ function computeWeeklyReport(refDate, settings, goal){
     weightStart, weightEnd, weeklyNet, weeklyCalTarget: Math.round(weeklyCalTarget),
   };
 }
+
+/* ---------------- 시작 인사 메시지 ---------------- */
+const WELCOME_MESSAGES = [
+  '처음 뵙겠습니다, 주인님! 오늘부터 함께 목표를 향해 달려볼까요? 🐣',
+  '환영해요! 작은 기록 하나하나가 큰 변화를 만들어요. 오늘 첫 기록을 남겨볼까요? ✨',
+];
+const CELEBRATE_MESSAGES = [
+  '주인님, 어제 목표를 멋지게 해내셨어요! 오늘도 이 기세로 가볼까요? 🎉',
+  '우와, 어제 정말 잘하셨어요! 오늘도 화이팅입니다 💪',
+  '어제 목표 달성! 이 페이스라면 금방 목표에 닿을 거예요 🔥',
+];
+const COMFORT_MESSAGES = [
+  '주인님, 어제는 목표에 조금 못 미쳤지만, 오늘을 꼭 할 수 있을 거예요. 힘내세요, 화이팅! 🐣',
+  '어제는 조금 아쉬웠지만 괜찮아요. 매일이 완벽할 순 없으니까요. 오늘 다시 해봐요 🌱',
+  '어제 살짝 넘쳤다고 너무 자책하지 마세요. 오늘 한 끼부터 다시 시작하면 돼요 🤍',
+];
+const REMINDER_MESSAGES = [
+  '어제는 기록이 없었네요. 괜찮아요, 오늘부터 다시 차곡차곡 채워봐요 📝',
+  '하루 정도는 쉬어갈 수도 있죠. 오늘 다시 시작해볼까요? 🌤',
+];
+function pickRandom(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
+function computeGreeting(){
+  const logKeys = storageListPrefix('log:');
+  const hasAnyLogsEver = logKeys.some(k=>{
+    const v = storageGet(k);
+    if(!v) return false;
+    try{ return hasAnyData(JSON.parse(v)); }catch(e){ return false; }
+  });
+  if(!hasAnyLogsEver){ return pickRandom(WELCOME_MESSAGES); }
+
+  const today = new Date();
+  if(today.getDay()===1){
+    const report = computeWeeklyReport(today, state.settings, state.goal);
+    if(report.loggedCount>0){
+      return `지난주 성적표가 나왔어요! 등급은 ${report.grade}예요. ${GRADE_MESSAGES[report.grade]}`;
+    }
+  }
+
+  const yesterday = new Date(today); yesterday.setDate(today.getDate()-1);
+  const yLog = loadLog(dateKey(yesterday));
+  let base;
+  if(!hasAnyData(yLog)){
+    base = pickRandom(REMINDER_MESSAGES);
+  } else {
+    const yTotals = computeTotals(yLog, state.settings);
+    const goalDerived = computeGoalDerived(state.goal);
+    const weeklyCalTarget = goalDerived ? goalDerived.weeklyCal : LEGACY_WEEKLY_CAL;
+    const dailyTarget = (weeklyCalTarget/7) * 0.8;
+    base = (yTotals.net <= dailyTarget) ? pickRandom(CELEBRATE_MESSAGES) : pickRandom(COMFORT_MESSAGES);
+  }
+  const streak = computeStreak();
+  if(streak>=7){ base += ` 벌써 ${streak}일 연속 기록 중이에요, 대단해요! 🔥`; }
+  return base;
+}
+function dismissGreeting(){ state.showGreeting=false; render(); }
 function loadBodyHistory(){
   const keys = storageListPrefix('log:');
   const entries = [];
@@ -1085,6 +1149,24 @@ function weeklyReportCardHTML(r){
     ${weightLine}
   </div>`;
 }
+function greetingModalHTML(){
+  return `
+  <div class="greet-overlay" onclick="if(event.target===this) dismissGreeting()">
+    <div class="greet-modal">
+      <svg viewBox="0 0 100 100" class="greet-mascot">
+        <path d="M50 17 Q45 7 55 3 Q60 12 50 17Z" fill="#7EBF7E"/>
+        <circle cx="50" cy="56" r="38" fill="#FDE9C8"/>
+        <circle cx="36" cy="52" r="5" fill="#3B2F2F"/>
+        <circle cx="64" cy="52" r="5" fill="#3B2F2F"/>
+        <circle cx="29" cy="64" r="6.5" fill="#F6B8A5" opacity="0.7"/>
+        <circle cx="71" cy="64" r="6.5" fill="#F6B8A5" opacity="0.7"/>
+        <path d="M38 70 Q50 80 62 70" stroke="#3B2F2F" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+      </svg>
+      <div class="greet-text">${escapeHtml(state.greetingText)}</div>
+      <button class="greet-btn" onclick="dismissGreeting()">오늘도 시작할게요</button>
+    </div>
+  </div>`;
+}
 function goalCardHTML(derived, goal){
   if(!derived){
     return `
@@ -1185,6 +1267,7 @@ function render(){
   const weeklyReport = computeWeeklyReport(state.currentDate, s, goal);
 
   app.innerHTML = `
+    ${state.showGreeting ? greetingModalHTML() : ''}
     <div class="top">
       <div class="brand">
         <div class="logo">🔥</div>
@@ -1372,6 +1455,7 @@ function init(){
   if(migrateExerciseDBTags(state.exerciseDB)) saveDB('exercise');
   state.goal = loadGoal();
   refreshDay();
+  state.greetingText = computeGreeting();
   render();
 }
 init();
