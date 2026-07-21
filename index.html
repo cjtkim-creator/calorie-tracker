@@ -111,6 +111,9 @@
   @media(max-width:600px){.meal-grid{grid-template-columns:1fr;} .settings-grid{grid-template-columns:1fr;} .summary-grid{grid-template-columns:1fr;}}
 
   .meal-box{border:1px solid var(--border);border-radius:12px;padding:10px;background:#FDFCFA;}
+  .meal-box-fasting{background:#F3F1FB;border-color:#D9D3F0;}
+  .fasting-tag{font-size:10px;font-weight:700;color:#6C5CE7;background:#EAE6FA;padding:1px 6px;border-radius:10px;margin-left:4px;}
+  .style-tip{font-size:11.5px;color:var(--muted);background:#F5F3EC;border-radius:8px;padding:7px 10px;margin-bottom:12px;line-height:1.5;}
   .meal-box .mtitle{font-size:12.5px;font-weight:700;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;}
   .meal-box .mtitle .subtotal{font-size:11px;color:var(--muted);font-weight:600;}
   .add-row{display:flex;gap:6px;margin-bottom:8px;}
@@ -211,9 +214,20 @@
 
 const DEFAULT_SETTINGS = { activityBaseline: 2100, stepsKcalFactor: 0.045, assumedWeight: 70, waterMlPerKg: 33, foodWaterMl: 800, dietStyle: 'balanced', exerciseTags: [] };
 const DIET_MACRO_RATIOS = {
-  balanced:     { carb:50, protein:20, fat:30 },
-  lowcarb:      { carb:5,  protein:20, fat:75 },
-  highprotein:  { carb:40, protein:35, fat:25 },
+  balanced:            { carb:50, protein:20, fat:30 },
+  lowcarb:             { carb:5,  protein:20, fat:75 },
+  highprotein:         { carb:40, protein:35, fat:25 },
+  lowcarbhighprotein:  { carb:20, protein:35, fat:45 },
+  intermittent:        { carb:40, protein:30, fat:30 },
+  mediterranean:       { carb:45, protein:15, fat:40 },
+};
+const STYLE_FOOD_TIPS = {
+  balanced: '탄수화물·단백질·지방을 고르게 챙기는 균형 잡힌 식단이에요.',
+  lowcarb: '고기·계란·버터·아보카도 등 지방 위주로 드시고, 밥·빵·면은 최소화하세요.',
+  highprotein: '닭가슴살·두부·생선·달걀 등 단백질 위주로 챙기고, 탄수화물은 적당히 유지하세요.',
+  lowcarbhighprotein: '살코기·흰살생선·그릭요거트·치즈 등 저탄수+고단백 조합으로 챙기세요.',
+  intermittent: '정해진 공복 시간을 유지하고, 첫 식사부터는 균형 있게 드세요. 아침은 공복(금식) 시간이에요.',
+  mediterranean: '올리브유·생선·견과류·신선한 과일과 채소를 중심으로 드세요.',
 };
 const LEGACY_WEEKLY_CAL = -6070;
 const LEGACY_WEEKLY_KG = 0.79;
@@ -974,25 +988,33 @@ const DIET_STYLES = [
   { key:'balanced', label:'균형식' },
   { key:'lowcarb', label:'저탄고지' },
   { key:'highprotein', label:'고단백' },
+  { key:'lowcarbhighprotein', label:'저탄고단' },
+  { key:'intermittent', label:'간헐적단식' },
+  { key:'mediterranean', label:'지중해성 식단' },
 ];
 const PLACEHOLDER_SUGGESTIONS = {
   balanced:     { breakfast:'예: 사과, 당근, 달걀 2개', lunch:'예: 샐러드, 닭가슴살', snack:'예: 두유, 견과류', dinner:'예: 생선, 나물 반찬' },
   lowcarb:      { breakfast:'예: 달걀, 아보카도, 베이컨', lunch:'예: 삼겹살, 쌈채소', snack:'예: 치즈, 견과류', dinner:'예: 소고기, 버터야채' },
   highprotein:  { breakfast:'예: 달걀흰자, 닭가슴살', lunch:'예: 닭가슴살, 현미밥', snack:'예: 두유, 프로틴바', dinner:'예: 생선, 두부' },
+  lowcarbhighprotein: { breakfast:'예: 달걀, 그릭요거트, 치즈', lunch:'예: 닭가슴살, 스테이크', snack:'예: 견과류, 치즈', dinner:'예: 소고기, 연어' },
+  intermittent: { breakfast:'🌙 공복(금식) 유지 시간이에요', lunch:'예: 첫 식사 - 균형있게', snack:'예: 견과류, 두유', dinner:'예: 단백질 위주 식사' },
+  mediterranean: { breakfast:'예: 올리브유, 그릭요거트, 과일', lunch:'예: 생선, 샐러드, 올리브유', snack:'예: 견과류, 과일', dinner:'예: 생선, 채소, 올리브유' },
 };
+function isFastingMeal(style, mealKey){ return style==='intermittent' && mealKey==='breakfast'; }
 function mealBoxHTML(m){
   const items = state.currentLog.meals[m.key] || [];
   const subtotal = items.reduce((s,i)=>s+(Number(i.kcal)||0),0);
   const style = state.settings.dietStyle || 'balanced';
   const placeholder = (PLACEHOLDER_SUGGESTIONS[style] || PLACEHOLDER_SUGGESTIONS.balanced)[m.key];
+  const fasting = isFastingMeal(style, m.key);
   return `
-  <div class="meal-box">
-    <div class="mtitle"><span>${m.label}</span><span class="subtotal">${subtotal} kcal</span></div>
+  <div class="meal-box ${fasting?'meal-box-fasting':''}">
+    <div class="mtitle"><span>${m.label}${fasting?' <span class="fasting-tag">🌙 금식</span>':''}</span><span class="subtotal">${subtotal} kcal</span></div>
     <div class="add-row">
       <input type="text" id="add-input-${m.key}" placeholder="${placeholder}" onkeydown="if(event.key==='Enter'){addMealItem('${m.key}')}">
       <button onclick="addMealItem('${m.key}')">추가</button>
     </div>
-    ${items.length===0 ? '<div class="empty-note">아직 입력한 음식이 없어요.</div>' : items.map(i=>itemRowHTML('food', m.key, i)).join('')}
+    ${items.length===0 ? `<div class="empty-note">${fasting?'🌙 간헐적 단식 시간이에요 (공복 유지). 드셨다면 그대로 입력하셔도 돼요.':'아직 입력한 음식이 없어요.'}</div>` : items.map(i=>itemRowHTML('food', m.key, i)).join('')}
   </div>`;
 }
 function recommendedExercises(){
@@ -1105,11 +1127,14 @@ function macroTargetRow(label, actual, target, cls, foods){
   </div>`;
 }
 function nutritionCardHTML(totals, settings, goalDerived){
-  const styleLabel = (DIET_STYLES.find(d=>d.key===(settings.dietStyle||'balanced'))||{}).label || '균형식';
+  const style = settings.dietStyle || 'balanced';
+  const styleLabel = (DIET_STYLES.find(d=>d.key===style)||{}).label || '균형식';
   const t = macroTargets(settings, totals, goalDerived);
+  const r = DIET_MACRO_RATIOS[style] || DIET_MACRO_RATIOS.balanced;
   return `
   <div class="card">
-    <h2>🥗 오늘의 영양소 <span style="font-weight:400;color:var(--muted);font-size:11.5px;">(${styleLabel} 기준, 목표 ${t.dailyIntakeTarget}kcal)</span></h2>
+    <h2>🥗 오늘의 영양소 <span style="font-weight:400;color:var(--muted);font-size:11.5px;">(${styleLabel} · 탄단지 ${r.carb}:${r.protein}:${r.fat} · 목표 ${t.dailyIntakeTarget}kcal)</span></h2>
+    <div class="style-tip">${STYLE_FOOD_TIPS[style] || ''}</div>
     ${macroTargetRow('🍞 탄수화물', totals.carb, t.carbG, 'macro-fill-carb', topFoodsByMacro('carb'))}
     ${macroTargetRow('🥑 지방', totals.fat, t.fatG, 'macro-fill-fat', topFoodsByMacro('fat'))}
     ${macroTargetRow('🍗 단백질', totals.protein, t.proteinG, 'macro-fill-protein', topFoodsByMacro('protein'))}
@@ -1329,7 +1354,10 @@ function render(){
 
       <h3 style="margin-top:16px;">🍱 다이어트 스타일</h3>
       <select id="set-dietStyle" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);font-size:13px;">
-        ${DIET_STYLES.map(d=>`<option value="${d.key}" ${s.dietStyle===d.key?'selected':''}>${d.label}</option>`).join('')}
+        ${DIET_STYLES.map(d=>{
+          const r = DIET_MACRO_RATIOS[d.key] || DIET_MACRO_RATIOS.balanced;
+          return `<option value="${d.key}" ${s.dietStyle===d.key?'selected':''}>${d.label} - 탄단지 ${r.carb}:${r.protein}:${r.fat}</option>`;
+        }).join('')}
       </select>
       <div class="hint" style="margin-top:6px;">식사 입력칸의 추천 문구가 선택한 스타일에 맞춰 바뀌어요.</div>
 
